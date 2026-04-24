@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "notion-spec-to-code": {
+      "command": "python3",
+      "args": ["/Users/eunji/project/notion-spec-to-code/mcp/server.py"]
+    }
+  }
+}

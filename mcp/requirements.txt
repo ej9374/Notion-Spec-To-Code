@@ -1,0 +1,4 @@
+fastmcp
+notion-client
+python-dotenv
+google-genai
