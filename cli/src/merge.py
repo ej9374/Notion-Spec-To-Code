@@ -11,6 +11,27 @@ from pathlib import Path
 # 파일명이 다르더라도 내용 유사도가 이 값 이상이면 "비슷한 파일"로 간주한다.
 SIMILARITY_THRESHOLD = 0.6
 
+# 파일명 suffix → 패키지 하위 경로 매핑.
+# _resolve_target_path에서 package 선언이 없거나 베이스 패키지와 맞지 않을 때 사용한다.
+_FILENAME_SUFFIX_TO_SUBPKG: list[tuple[str, str]] = [
+    ("ControllerTest.java", "controller"),
+    ("ServiceTest.java", "service"),
+    ("Controller.java", "controller"),
+    ("Service.java", "service"),
+    ("Request.java", "dto.request"),
+    ("Response.java", "dto.response"),
+    ("Event.java", "dto.event"),
+    ("Enum.java", "dto.enums"),
+]
+
+
+def _infer_subpkg_from_filename(filename: str) -> str:
+    """파일명 suffix로 패키지 하위 경로를 추론한다. 매칭 없으면 'dto' 반환."""
+    for suffix, subpkg in _FILENAME_SUFFIX_TO_SUBPKG:
+        if filename.endswith(suffix):
+            return subpkg
+    return "dto"
+
 
 def _find_exact_file(filename: str, spring_root: Path) -> Path | None:
     """파일명 stem이 정확히 일치하는 .java 파일을 반환한다 (대소문자 무시)."""
@@ -102,12 +123,23 @@ def _resolve_target_path(filename: str, content: str, spring_root: Path) -> Path
     """생성된 코드의 package 선언을 읽어 저장 경로를 결정한다.
 
     *Test.java 파일은 src/test/java, 그 외는 src/main/java 아래에 놓는다.
-    예) "package com.example.dto;" → spring_root/src/main/java/com/example/dto/Foo.java
-    package 선언이 없으면 "com.example.dto" 로 fallback한다.
-    디렉토리가 없으면 자동으로 생성한다.
+
+    package 선언 우선순위:
+      1. 코드 내 package 선언이 있으면 그대로 사용
+      2. 없으면 파일명 suffix로 추론 (Request→dto.request, Controller→controller 등)
+      3. 그래도 모르면 "dto" fallback
+    베이스 패키지는 스프링 프로젝트의 기존 .java 파일에서 자동 감지한다.
     """
     pkg_match = re.search(r"^package\s+([\w.]+);", content, re.MULTILINE)
-    package = pkg_match.group(1) if pkg_match else "com.example.dto"
+    if pkg_match:
+        package = pkg_match.group(1)
+    else:
+        # package 선언 없음 → 베이스 패키지 감지 후 파일명으로 하위 경로 추론
+        from generator import _detect_package
+        base = _detect_package(spring_root)
+        subpkg = _infer_subpkg_from_filename(filename)
+        package = f"{base}.{subpkg}"
+
     package_path = Path(*package.split("."))
 
     # 파일명이 Test.java로 끝나면 test 소스셋, 그 외는 main 소스셋

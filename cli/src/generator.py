@@ -81,34 +81,58 @@ def _group_specs(specs: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]
 
 
 def _build_dto_prompt(spec: dict[str, Any], base_package: str) -> str:
-    """DTO 생성용 프롬프트. 스펙 1개를 받아 DTO 클래스들만 요청한다."""
+    """DTO 생성용 프롬프트. 스펙 1개를 받아 DTO 클래스들만 요청한다.
+
+    MCP가 반환한 class_name을 그대로 파일명으로 나열해 Gemini가 임의로
+    바꾸지 못하도록 강제한다.
+    """
+    dto_defs = spec.get("dto_definitions", [])
+
+    # description → 패키지 하위 경로 매핑
+    _desc_to_subpkg = {
+        "Request Body": "dto.request",
+        "Response Body": "dto.response",
+        "Data Payload": "dto.event",
+    }
+
+    # 각 파일마다 파일명 + 정확한 package 선언을 명시
+    file_specs = "\n".join(
+        "  - {cls}.java  →  package {pkg};".format(
+            cls=d["class_name"],
+            pkg=f"{base_package}.{_desc_to_subpkg.get(d.get('description', ''), 'dto')}",
+        )
+        for d in dto_defs
+    )
+
+    first = dto_defs[0] if dto_defs else {"class_name": "ClassName", "description": "Request Body"}
+    first_pkg = f"{base_package}.{_desc_to_subpkg.get(first.get('description', ''), 'dto')}"
+
     return f"""Spring Boot DTO 클래스를 생성하라.
 
 API: {spec.get("method")} {spec.get("api_endpoint")}
-패키지: {base_package}
+베이스 패키지: {base_package}
 명세(JSON):
 {json.dumps(spec, ensure_ascii=False, indent=2)}
 
+생성할 파일과 package 선언 (아래 내용을 정확히 그대로 사용 — 절대 변경 금지):
+{file_specs}
+
 규칙:
-- 클래스명은 명세의 class_name 그대로 사용 (절대 변경 금지)
+- 클래스명·파일명은 위 목록 그대로 사용
+- package 선언도 위 목록 그대로 사용 (임의로 변경하거나 세그먼트 추가 금지)
 - convention_preset 어노테이션 그대로 적용
-- Request Body  → package {base_package}.dto.request
-- Response Body → package {base_package}.dto.response
-- Data Payload  → package {base_package}.dto.event
 - enum_values 있는 필드 → 별도 Enum 파일로 분리 (package {base_package}.dto.enums)
 - seats[] 같은 배열 표기 필드 → Inner 클래스 분리 (package {base_package}.dto.inner)
-- 각 파일은 ```java 블록으로, 첫 줄에 // ClassName.java 형식의 주석 (경로 구분자 '/' 절대 포함 금지)
-  올바른 예: // OrderCreateRequest.java
-  잘못된 예: // com/example/dto/request/OrderCreateRequest.java
+- 각 파일은 ```java 블록으로, 첫 줄에 위 목록의 파일명 그대로 주석 (경로 구분자 '/' 포함 금지)
 
 출력 형식:
 ```java
-// ClassName.java
-package {base_package}.dto.request;
+// {first['class_name']}.java
+package {first_pkg};
 
 // imports ...
 
-public class ClassName {{
+public class {first['class_name']} {{
 }}
 ```""".strip()
 
