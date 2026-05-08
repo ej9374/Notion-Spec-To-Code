@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: notion-harness
+Version: 0.1.0
+Requires-Python: >=3.11
+Requires-Dist: notion-client>=2.0.0
+Requires-Dist: google-genai>=1.0.0
+Requires-Dist: python-dotenv>=1.0.0
+Requires-Dist: mcp>=1.0.0
+Requires-Dist: fastmcp>=2.0.0
