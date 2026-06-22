@@ -5,9 +5,10 @@ from __future__ import annotations
 # 전체 파이프라인 흐름:
 #   Notion DB URL
 #     → parser.py  : MCP 서버 호출 → DTO JSON 목록
-#     → generator.py: Gemini API 호출 → Java 파일 목록
+#     → generator.py: Gemini API 호출 → Java 파일 목록 (기존 파일 스캔 → 이름 반영)
+#     → loop.py (pre-merge): 디스크 쓰기 없이 Gemini 일관성 검토 (DTO 참조, import, 클래스명)
 #     → merge.py   : diff 출력 → 사용자 승인 → 스프링 프로젝트에 파일 반영
-#     → loop.py    : Gradle 테스트 실행 → 실패 시 Gemini 교정 후 재작성 (최대 3회)
+#     → loop.py (post-merge): Gradle 테스트 실행 → 실패 시 Gemini 교정 후 재작성 (최대 3회)
 
 import argparse
 import time
@@ -22,14 +23,15 @@ load_dotenv()
 def run(url: str, spring_root: Path) -> None:
     """Notion DB URL을 받아 파이프라인을 한 번 실행한다.
 
-    1. parse_all_specs: MCP로 전체 API 명세 → DTO 정의 목록
-    2. generate_code:   각 DTO 명세 → Gemini → Java 파일 목록
-    3. merge_files:     사용자 승인 후 스프링 프로젝트에 파일 반영 (먼저 기록해야 Gradle 빌드 가능)
-    4. run_correction_loop: Gradle 테스트 실행 → 실패 시 Gemini 교정 후 재작성 (최대 3회)
+    1. parse_all_specs : MCP로 전체 API 명세 → DTO 정의 목록
+    2. generate_code_all: Gemini → Java 파일 목록 (기존 파일 스캔 후 이름·내용 반영)
+    3. run_premerge_review: 디스크 쓰기 없이 DTO 참조·import·클래스명 일관성 검토
+    4. merge_files     : diff 보여준 뒤 사용자 승인 → 스프링 프로젝트에 파일 반영
+    5. run_correction_loop: Gradle 테스트 → 실패 시 Gemini 교정 후 재작성 (최대 3회)
     """
     import json
     from generator import generate_code_all
-    from loop import run_correction_loop
+    from loop import run_correction_loop, run_premerge_review
     from merge import merge_files
     from parser import parse_all_specs
 
@@ -39,14 +41,18 @@ def run(url: str, spring_root: Path) -> None:
 
     all_files = generate_code_all(specs, spring_root)
 
-    print("\n[생성된 파일 목록]")
+    print(f"\n[생성된 파일 목록] {len(all_files)}개")
     for f in all_files:
         print(f"  - {f['filename']}")
 
-    # 먼저 파일을 스프링 프로젝트에 반영해야 Gradle 빌드가 가능하다
+    # 승인 전 Gemini 일관성 검토 (디스크 쓰기 없음)
+    print("\n[Pre-merge 검토] DTO 참조·import·클래스명 일관성 확인 중...")
+    all_files = run_premerge_review(all_files)
+
+    # 사용자에게 diff 보여주고 승인 받은 파일만 스프링 프로젝트에 반영
     written_files = merge_files(all_files, spring_root)
 
-    # 파일이 실제로 기록된 경우에만 Gradle 테스트 + 교정 루프를 실행한다
+    # 실제로 기록된 파일이 있을 때만 Gradle 테스트 + 교정 루프 실행
     if written_files:
         run_correction_loop(written_files, spring_root)
 
@@ -71,7 +77,10 @@ def watch(url: str, spring_root: Path, interval: int = 30) -> None:
         if changed:
             print(f"변경 감지: {url}")
             last_edited = last_edited_new
-            run(url, spring_root)
+            try:
+                run(url, spring_root)
+            except Exception as exc:
+                print(f"[경고] 파이프라인 실패, watch 계속 유지: {exc}")
 
 
 def main() -> None:
@@ -102,12 +111,23 @@ def main() -> None:
     watch_parser.add_argument("--url", required=True, help="Notion DB URL")
     watch_parser.add_argument("--interval", type=int, default=30, metavar="SEC")
 
+    subparsers.add_parser("selftest", help="하네스 Python 코드 자체 테스트 실행")
+
     args = parser.parse_args()
 
     if args.command == "run":
         run(args.url, args.root)
     elif args.command == "watch":
         watch(args.url, args.root, args.interval)
+    elif args.command == "selftest":
+        import sys
+        from loop import run_harness_tests
+        cli_root = Path(__file__).parent.parent
+        passed, log = run_harness_tests(cli_root)
+        print(log)
+        if not passed:
+            sys.exit(1)
+        print("모든 하네스 테스트 통과.")
 
 
 if __name__ == "__main__":
