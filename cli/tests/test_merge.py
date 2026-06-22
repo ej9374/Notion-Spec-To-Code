@@ -126,6 +126,16 @@ class TestResolveTargetPath:
         assert "src/test/java" in str(path)
         assert "src/main/java" not in str(path)
 
+    def test_tests_plural_files_go_to_test_directory(self, tmp_path):
+        """*Tests.java (복수형)도 src/test/java로 라우팅되어야 한다.
+        Gemini가 복수형을 생성할 때 src/main/java에 들어가면
+        @SpringBootTest import 오류로 compileJava가 실패한다.
+        """
+        content = "package eunji.ticketing;\npublic class TicketingApplicationTests {}"
+        path = _resolve_target_path("TicketingApplicationTests.java", content, tmp_path)
+        assert "src/test/java" in str(path)
+        assert "src/main/java" not in str(path)
+
     def test_non_test_files_go_to_main_directory(self, tmp_path):
         content = "package com.example.controller;\npublic class OrderController {}"
         path = _resolve_target_path("OrderController.java", content, tmp_path)
@@ -192,3 +202,22 @@ class TestMergeFiles:
             with patch("merge._ask_overwrite_similar", return_value=False):
                 merge_files(files, tmp_path)
         assert len(list(tmp_path.rglob("*.java"))) == 2
+
+    def test_exception_in_merge_single_propagates(self, tmp_path):
+        """_merge_single에서 발생한 예외가 merge_files 밖으로 전파돼야 한다.
+        CLAUDE.md: '에러는 절대 묵살하지 말고 위로 올릴 것'
+        """
+        files = [{"filename": "A.java", "content": "class A {}"}]
+        with patch("merge._merge_single", side_effect=RuntimeError("disk full")):
+            with pytest.raises(RuntimeError, match="disk full"):
+                merge_files(files, tmp_path)
+
+    def test_find_functions_called_once_per_file_not_twice(self, tmp_path):
+        """요약 테이블과 실제 merge가 각각 파일시스템을 스캔하지 않고 한 번만 스캔해야 한다."""
+        files = [{"filename": "A.java", "content": "package p;\nclass A {}"}]
+        with patch("merge._find_exact_file", return_value=None) as mock_exact:
+            with patch("merge._find_similar_by_content", return_value=[]) as mock_similar:
+                with patch("merge._ask_approval", return_value=False):
+                    merge_files(files, tmp_path)
+        assert mock_exact.call_count == 1, f"_find_exact_file {mock_exact.call_count}회 호출 (1회 예상)"
+        assert mock_similar.call_count == 1, f"_find_similar_by_content {mock_similar.call_count}회 호출 (1회 예상)"
