@@ -1,0 +1,36 @@
+[project]
+name = "notion-harness"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "notion-client>=2.0.0",
+    "google-genai>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "mcp>=1.0.0",
+    "fastmcp>=2.0.0",
+]
+
+[project.scripts]
+notion-harness = "main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools]
+py-modules = ["main", "poller", "parser", "generator", "loop", "merge"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-mock>=3.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
