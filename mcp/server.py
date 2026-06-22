@@ -95,5 +95,77 @@ def get_dto_definition(page_url: str) -> dict:
     }
 
 
+def _process_page(page: dict) -> dict | None:
+    page_id = page["id"].replace("-", "")
+    header = parse_page_header(page["properties"])
+    if not header["feature_name"]:
+        return None
+
+    blocks = notion.blocks.children.list(block_id=page_id)
+
+    dto_definitions = []
+    for block in blocks["results"]:
+        if block["type"] != "child_database":
+            continue
+        db_title = block["child_database"].get("title", "").strip()
+        if db_title not in TARGET_DB_TITLES:
+            continue
+
+        db_id = block["id"].replace("-", "")
+        db_meta = notion.databases.retrieve(database_id=db_id)
+        data_sources = db_meta.get("data_sources", [])
+        if not data_sources:
+            continue
+
+        rows = notion.data_sources.query(data_source_id=data_sources[0]["id"])
+        fields = parse_inline_db_rows(rows["results"], db_title)
+
+        dto_definitions.append({
+            "class_name": _make_class_name(header["feature_name"], db_title),
+            "description": db_title,
+            "convention_preset": get_convention_preset(),
+            "fields": fields,
+        })
+
+    if not dto_definitions:
+        return None
+
+    return {
+        "api_endpoint": header["uri"],
+        "method": header["method"],
+        "dto_definitions": dto_definitions,
+    }
+
+
+@mcp.tool()
+def get_all_dto_definitions(db_url: str) -> list:
+    """Notion API 명세서 DB의 모든 행을 순회하며 DTO 정의를 생성합니다.
+    db_url: Notion 데이터베이스 URL (API 명세서 DB)
+    """
+    page_id = _extract_page_id(db_url)
+    blocks = notion.blocks.children.list(block_id=page_id)
+    db_block = next(
+        (b for b in blocks["results"] if b["type"] == "child_database"),
+        None,
+    )
+    if not db_block:
+        return []
+
+    db_id = db_block["id"].replace("-", "")
+    db_meta = notion.databases.retrieve(database_id=db_id)
+    data_sources = db_meta.get("data_sources", [])
+    if not data_sources:
+        return []
+    pages = notion.data_sources.query(data_source_id=data_sources[0]["id"])
+
+    results = []
+    for page in pages["results"]:
+        result = _process_page(page)
+        if result:
+            results.append(result)
+
+    return results
+
+
 if __name__ == "__main__":
     mcp.run()
